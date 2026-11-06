@@ -37,11 +37,11 @@ dist/Euphonica-0.99.8-fedora44-x86_64.AppImage
 ## GitHub Actions
 
 `.github/workflows/build.yml` runs on every push to `main`, weekly on a
-schedule, and on demand. It resolves the newest Euphonica tag, builds and
-smoke-tests the AppImage in rootless Podman, and publishes the AppImage plus
-its SHA-256 as a GitHub release tagged with the upstream tag. Scheduled runs
-skip tags that already have a release. The Cargo registry and MPD tarball are
-cached between runs.
+schedule, and on demand. It resolves the newest Euphonica tag, builds the
+AppImage in rootless Podman, smoke-tests it in clean Fedora 44 and Ubuntu 26.04
+containers, and publishes the AppImage plus its SHA-256 as a GitHub release
+tagged with the upstream tag. Scheduled runs skip tags that already have a
+release. The Cargo registry and MPD tarball are cached between runs.
 
 Use **Actions → Build Euphonica AppImage → Run workflow** to build a specific
 tag or force a rebuild.
