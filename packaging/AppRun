@@ -1,0 +1,58 @@
+#!/bin/sh
+# AppRun for the Euphonica AppImage.
+#
+# Sets up the bundled GTK/libadwaita, GSettings, icon and PipeWire
+# environment, then launches Euphonica.  The bundled mpd is found through
+# PATH, so Standalone Mode works without an MPD installation on the host.
+set -eu
+
+HERE="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd)"
+APPDIR="$HERE"
+export APPDIR
+
+export PATH="$APPDIR/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GIO_MODULE_DIR="$APPDIR/usr/lib64/gio/modules"
+
+# PipeWire client configuration and SPA support plugins.  These are small and
+# avoid depending on the host's PipeWire version.
+if [ -d "$APPDIR/usr/share/pipewire" ]; then
+  export PIPEWIRE_CONFIG_DIR="$APPDIR/usr/share/pipewire"
+fi
+if [ -d "$APPDIR/usr/lib64/spa-0.2" ]; then
+  export SPA_PLUGIN_DIR="$APPDIR/usr/lib64/spa-0.2"
+fi
+if [ -d "$APPDIR/usr/lib64/pipewire-0.3" ]; then
+  export PIPEWIRE_MODULE_DIR="$APPDIR/usr/lib64/pipewire-0.3"
+fi
+
+# ---------------------------------------------------------------------------
+# Relocated compile-time paths
+# ---------------------------------------------------------------------------
+# Euphonica's Rust binary has PKGDATADIR and LOCALEDIR compiled in.  The build
+# configured them to these fixed /tmp paths so the AppImage can be mounted
+# anywhere.  Point them at this mount; refuse to overwrite another user's links.
+link_fixed() {
+  link="$1"
+  target="$2"
+  if [ -L "$link" ]; then
+    if [ "$(stat -c %u "$link" 2>/dev/null || echo unknown)" != "$(id -u)" ]; then
+      echo "Euphonica: $link exists and belongs to another user" >&2
+      echo "Euphonica: remove it or run Euphonica as that user" >&2
+      exit 1
+    fi
+    ln -sfn "$target" "$link"
+  elif [ -e "$link" ]; then
+    echo "Euphonica: $link exists and is not a symlink" >&2
+    exit 1
+  else
+    ln -s "$target" "$link"
+  fi
+}
+
+link_fixed /tmp/.euphonica-data "$APPDIR/usr/share/euphonica"
+link_fixed /tmp/.euph-locale "$APPDIR/usr/share/locale"
+
+exec "$APPDIR/usr/bin/euphonica" "$@"

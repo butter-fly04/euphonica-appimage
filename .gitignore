@@ -1,0 +1,15 @@
+# Upstream source checkout (created by build.sh)
+/src/
+
+# Build tree, AppDir, downloads and Cargo cache
+/work/
+
+# Downloaded AppImage tooling
+/tools/
+
+# Build output
+/dist/
+
+# Python caches
+__pycache__/
+*.pyc

@@ -1,0 +1,208 @@
+name: Build Euphonica AppImage
+
+# The AppImage is built on Fedora 44 inside rootless Podman.  The GitHub
+# runner OS is only the CI host; it does not affect the AppImage's glibc
+# requirement or its target distribution.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream tag to build (blank = newest)"
+        required: false
+        default: ""
+        type: string
+      force:
+        description: "Rebuild even when a release already exists"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "40 3 * * 1"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: Euphonica
+  UPSTREAM_URL: https://github.com/htkhiem/euphonica.git
+  DISTRO: fedora44
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      should_build: ${{ steps.decide.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream tag
+        id: tag
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+          UPSTREAM_URL: ${{ env.UPSTREAM_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED_TAG:-}" ]; then
+            tag="$REQUESTED_TAG"
+          else
+            tag="$(packaging/latest-tag.sh "$UPSTREAM_URL")"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "error: unexpected upstream tag: $tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "==> Upstream tag: $tag"
+
+      - name: Check for an existing release
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "${FORCE:-false}" != "true" ]; then
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "==> Release $TAG already exists; nothing to do."
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rootless Podman
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap fuse-overlayfs slirp4netns
+
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"
+          fi
+
+          runtime="/run/user/$(id -u)"
+          mkdir -p "$runtime"
+          export XDG_RUNTIME_DIR="$runtime"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus"
+          {
+            echo "XDG_RUNTIME_DIR=$runtime"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime/bus"
+          } >> "$GITHUB_ENV"
+
+          podman --version
+
+          # Prefer the kernel overlay driver.  Fall back to fuse-overlayfs and
+          # finally vfs when the runner's user namespace does not allow it.
+          if ! podman info >/dev/null 2>&1; then
+            for driver in fuse-overlayfs vfs; do
+              echo "==> Retrying with the $driver storage driver"
+              rm -rf "$HOME/.local/share/containers/storage"
+              mkdir -p "$HOME/.config/containers"
+              printf '[storage]\ndriver = "%s"\n' "$driver" \
+                > "$HOME/.config/containers/storage.conf"
+              if podman info >/dev/null 2>&1; then
+                break
+              fi
+            done
+          fi
+
+          podman info >/dev/null
+          rootless="$(podman info --format '{{.Host.Security.Rootless}}')"
+          [ "$rootless" = "true" ] || {
+            echo "error: Podman is not running rootless" >&2
+            exit 1
+          }
+
+      - name: Cache AppImage tooling, downloads and Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            tools
+            work/fedora44/downloads
+            work/fedora44/cargo-home
+          key: ${{ runner.os }}-${{ env.APP_NAME }}-${{ needs.resolve.outputs.tag }}-${{ hashFiles('packaging/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.APP_NAME }}-${{ needs.resolve.outputs.tag }}-
+            ${{ runner.os }}-${{ env.APP_NAME }}-
+
+      - name: Build AppImage
+        env:
+          EUPHONICA_TAG: ${{ needs.resolve.outputs.tag }}
+        run: ./build.sh "$DISTRO"
+
+      - name: Test AppImage in a clean Fedora 44 container
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(dist/*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "error: expected exactly one AppImage, found ${#appimages[@]}" >&2
+            ls -l dist >&2
+            exit 1
+          fi
+          packaging/test-appimage.sh "${appimages[0]}"
+
+      - name: Create checksum
+        run: |
+          set -euo pipefail
+          app="$(ls dist/*.AppImage)"
+          ( cd dist && sha256sum "$(basename "$app")" ) > "$app.sha256"
+          cat "$app.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ needs.resolve.outputs.tag }}
+          path: |
+            dist/*.AppImage
+            dist/*.sha256
+          retention-days: 14
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          app="$(ls dist/*.AppImage)"
+          sha="$app.sha256"
+          notes="$(mktemp)"
+          {
+            echo "Automated Fedora 44 build of \`$TAG\`."
+            echo
+            echo "- Upstream: $UPSTREAM_URL"
+            echo "- Build environment: Fedora 44 (glibc 2.43)"
+            echo "- AppImage runtime: type 2"
+            echo "- SHA-256: \`$(cut -d' ' -f1 "$sha")\`"
+            echo
+            echo "Requires glibc 2.43 or newer (Ubuntu 26.04, Linux Mint 27, or newer)."
+          } > "$notes"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$app" "$sha" --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$app" "$sha" \
+              --title "$APP_NAME $TAG (Fedora 44)" \
+              --notes-file "$notes"
+          fi

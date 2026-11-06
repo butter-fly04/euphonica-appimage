@@ -1,0 +1,69 @@
+# Build image for the Fedora 44 (native) Euphonica AppImage.
+#
+# This Containerfile is self-contained: a fresh checkout can build it from the
+# upstream Fedora image without any locally prepared base image.  BASE_IMAGE
+# can still be overridden to layering on an existing Fedora 44 build image.
+ARG BASE_IMAGE=quay.io/fedora/fedora:44
+FROM ${BASE_IMAGE}
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# The metalink mirror list selects hosts that are unreachable from this
+# environment.  Use Fedora's canonical download host directly.  Reapplying
+# this on top of an already-prepared base image is harmless.
+RUN set -eux; \
+    sed -i \
+      -e 's|^metalink=.*|# metalink disabled for reproducible container builds|' \
+      -e 's|^#baseurl=http://download.example/pub/fedora/linux/releases/|baseurl=https://dl.fedoraproject.org/pub/fedora/linux/releases/|' \
+      /etc/yum.repos.d/fedora.repo; \
+    sed -i \
+      -e 's|^metalink=.*|# metalink disabled for reproducible container builds|' \
+      -e 's|^#baseurl=http://download.example/pub/fedora/linux/updates/|baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/|' \
+      /etc/yum.repos.d/fedora-updates.repo; \
+    sed -i 's|^enabled=1|enabled=0|' /etc/yum.repos.d/fedora-cisco-openh264.repo
+
+# Build tools and the GTK/GLib stack Euphonica is compiled against and bundles.
+RUN dnf -y --setopt=install_weak_deps=False --setopt=retries=10 --setopt=timeout=60 install \
+      meson ninja-build gcc gcc-c++ make \
+      pkgconf-pkg-config git python3 \
+      glib2-devel gobject-introspection-devel \
+      gtk4-devel libadwaita-devel \
+      appstream desktop-file-utils gettext \
+      libxml2 \
+      gdk-pixbuf2 shared-mime-info fontconfig \
+      hicolor-icon-theme adwaita-icon-theme \
+      patchelf file wget curl tar xz which hostname \
+      binutils findutils \
+      glibc-langpack-en \
+  && dnf clean all
+
+# Rust toolchain and Euphonica's linked libraries.
+#   rust, cargo, clang-libs - Rust build plus bindgen for pipewire-sys/libspa-sys
+#   pipewire-devel          - device enumeration (pipewire-rs)
+#   alsa-lib-devel          - ALSA output/device enumeration
+#   libsecret-devel         - MPD password storage in the keyring
+#   openssl-devel           - reqwest/native-tls for metadata providers
+#   sqlite-devel            - library metadata cache
+#   libwebp-devel           - album-art decoding
+RUN dnf -y --setopt=install_weak_deps=False --setopt=retries=10 --setopt=timeout=60 install \
+      rust cargo clang-libs \
+      pipewire-devel alsa-lib-devel libsecret-devel \
+      openssl-devel sqlite-devel libwebp-devel \
+  && dnf clean all
+
+# Dependencies of the minimal MPD built from source in inner-build.sh:
+# decoders, tag reader, resampler, outputs and storage.
+RUN dnf -y --setopt=install_weak_deps=False --setopt=retries=10 --setopt=timeout=60 install \
+      flac-devel libvorbis-devel opus-devel mpg123-devel \
+      libid3tag-devel soxr-devel zlib-devel \
+  && dnf clean all
+
+# Networking, settings schemas and the icon tool are runtime pieces that weak
+# dependencies would otherwise leave out of the build image.
+RUN dnf -y --setopt=install_weak_deps=False --setopt=retries=10 --setopt=timeout=60 install \
+      glib-networking ca-certificates gsettings-desktop-schemas libproxy \
+      librsvg2-tools \
+  && dnf clean all
+
+WORKDIR /work
