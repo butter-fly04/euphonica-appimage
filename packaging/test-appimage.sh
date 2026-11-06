@@ -26,7 +26,7 @@ podman run --rm \
   --security-opt label=disable \
   -v "$APPIMAGE:/test.AppImage:ro,Z" \
   "$IMAGE" \
-  /bin/sh -c '
+  /bin/bash -c '
     set -eu
     cd /tmp
     rm -rf squashfs-root
