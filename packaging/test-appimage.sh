@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Smoke-test a Euphonica AppImage.
 #
-# The first half runs in a clean Fedora 44 container (no GTK/Rust/MPD
-# packages installed) and checks the bundled MPD and the ELF/data closure.
+# The first half runs in a clean container (TEST_IMAGE, default Fedora 44;
+# CI also uses ubuntu:26.04) and checks the bundled MPD and the ELF/data
+# closure.
 # The second half, when a Broadway display daemon is available on the host,
 # starts the actual GUI headlessly for a few seconds.
 #

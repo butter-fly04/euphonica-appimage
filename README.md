@@ -91,10 +91,13 @@ guard as the Junction AppImage prevents clobbering another user's links.
 
 ```sh
 packaging/test-appimage.sh dist/Euphonica-*.AppImage
+
+# Minimum supported target
+TEST_IMAGE=ubuntu:26.04 packaging/test-appimage.sh dist/Euphonica-*.AppImage
 ```
 
-This extracts the AppImage in a clean `quay.io/fedora/fedora:44` container and
-checks:
+This extracts the AppImage in a clean container (`TEST_IMAGE`, default
+`quay.io/fedora/fedora:44`) and checks:
 
 - `mpd --version`
 - no unresolved shared libraries in `euphonica` or `mpd`
