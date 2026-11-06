@@ -57,7 +57,7 @@ overridden to layer on an existing Fedora 44 image.
 ## 3. Reproducing the build
 
 ```bash
-cd euphonica
+cd euphonica-appimage
 ./build.sh fedora44
 ```
 
