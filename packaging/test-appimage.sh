@@ -32,11 +32,13 @@ podman run --rm \
     rm -rf squashfs-root
     /test.AppImage --appimage-extract >/dev/null
 
+    # Match AppRun: bundled libraries live in usr/lib and usr/lib64.
+    export LD_LIBRARY_PATH="$PWD/squashfs-root/usr/lib:$PWD/squashfs-root/usr/lib64"
+
     echo "--- mpd --version"
     ./squashfs-root/usr/bin/mpd --version
 
     echo "--- ELF closure"
-    export LD_LIBRARY_PATH="$PWD/squashfs-root/usr/lib:$PWD/squashfs-root/usr/lib64"
     if ldd ./squashfs-root/usr/bin/euphonica 2>&1 | grep "not found"; then
       echo "missing libraries in euphonica" >&2
       exit 1
